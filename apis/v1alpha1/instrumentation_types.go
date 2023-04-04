@@ -30,6 +30,8 @@ type InstrumentationSpec struct {
 	Resource Resource `json:"resource,omitempty"`
 
 	// Propagators defines inter-process context propagation configuration.
+	// Values in this list will be set in the OTEL_PROPAGATORS env var.
+	// Enum=tracecontext;baggage;b3;b3multi;jaeger;xray;ottrace;none
 	// +optional
 	Propagators []Propagator `json:"propagators,omitempty"`
 
@@ -58,6 +60,10 @@ type InstrumentationSpec struct {
 	// DotNet defines configuration for DotNet auto-instrumentation.
 	// +optional
 	DotNet DotNet `json:"dotnet,omitempty"`
+
+	// Apache defines configuration for Apache HTTPD auto-instrumentation.
+	// +optional
+	ApacheHttpd ApacheHttpd `json:"apacheHttpd,omitempty"`
 }
 
 // Resource defines the configuration for the resource attributes, as defined by the OpenTelemetry specification.
@@ -83,6 +89,7 @@ type Exporter struct {
 // Sampler defines sampling configuration.
 type Sampler struct {
 	// Type defines sampler type.
+	// The value will be set in the OTEL_TRACES_SAMPLER env var.
 	// The value can be for instance parentbased_always_on, parentbased_always_off, parentbased_traceidratio...
 	// +optional
 	Type SamplerType `json:"type,omitempty"`
@@ -90,6 +97,7 @@ type Sampler struct {
 	// Argument defines sampler argument.
 	// The value depends on the sampler type.
 	// For instance for parentbased_traceidratio sampler type it is a number in range [0..1] e.g. 0.25.
+	// The value will be set in the OTEL_TRACES_SAMPLER_ARG env var.
 	// +optional
 	Argument string `json:"argument,omitempty"`
 }
@@ -143,6 +151,33 @@ type DotNet struct {
 	// If the former var had been defined, then the other vars would be ignored.
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
+}
+
+type ApacheHttpd struct {
+	// Image is a container image with Apache SDK and auto-instrumentation.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// Env defines Apache HTTPD specific env vars. There are four layers for env vars' definitions and
+	// the precedence order is: `original container env vars` > `language specific env vars` > `common env vars` > `instrument spec configs' vars`.
+	// If the former var had been defined, then the other vars would be ignored.
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// Attrs defines Apache HTTPD agent specific attributes. The precedence is:
+	// `agent default attributes` > `instrument spec attributes` .
+	// Attributes are documented at https://github.com/open-telemetry/opentelemetry-cpp-contrib/tree/main/instrumentation/otel-webserver-module
+	// +optional
+	Attrs []corev1.EnvVar `json:"attrs,omitempty"`
+
+	// Apache HTTPD server version. One of 2.4 or 2.2. Default is 2.4
+	// +optional
+	Version string `json:"version,omitempty"`
+
+	// Location of Apache HTTPD server configuration.
+	// Needed only if different from default "/usr/local/apache2/conf"
+	// +optional
+	ConfigPath string `json:"configPath,omitempty"`
 }
 
 // InstrumentationStatus defines status of the instrumentation.

@@ -59,12 +59,12 @@ func HorizontalPodAutoscaler(otelcol v1alpha1.OpenTelemetryCollector) string {
 	return DNSName(Truncate("%s-collector", 63, otelcol.Name))
 }
 
-// HorizontalPodAutoscaler builds the collector (deployment/daemonset) name based on the instance.
+// OpenTelemetryCollector builds the collector (deployment/daemonset) name based on the instance.
 func OpenTelemetryCollector(otelcol v1alpha1.OpenTelemetryCollector) string {
 	return DNSName(Truncate("%s", 63, otelcol.Name))
 }
 
-// HorizontalPodAutoscaler builds the collector (deployment/daemonset) name based on the instance.
+// OpenTelemetryCollectorName builds the collector (deployment/daemonset) name based on the instance.
 func OpenTelemetryCollectorName(otelcolName string) string {
 	return DNSName(Truncate("%s", 63, otelcolName))
 }
@@ -92,6 +92,11 @@ func Service(otelcol v1alpha1.OpenTelemetryCollector) string {
 // Ingress builds the ingress name based on the instance.
 func Ingress(otelcol v1alpha1.OpenTelemetryCollector) string {
 	return DNSName(Truncate("%s-ingress", 63, otelcol.Name))
+}
+
+// Route builds the route name based on the instance.
+func Route(otelcol v1alpha1.OpenTelemetryCollector, prefix string) string {
+	return DNSName(Truncate("%s-%s-route", 63, prefix, otelcol.Name))
 }
 
 // TAService returns the name to use for the TargetAllocator service.

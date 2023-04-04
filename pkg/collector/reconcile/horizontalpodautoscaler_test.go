@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	autoscalingv2beta2 "k8s.io/api/autoscaling/v2beta2"
@@ -35,59 +36,119 @@ import (
 	"github.com/open-telemetry/opentelemetry-operator/internal/config"
 	"github.com/open-telemetry/opentelemetry-operator/pkg/autodetect"
 	"github.com/open-telemetry/opentelemetry-operator/pkg/collector"
-	"github.com/open-telemetry/opentelemetry-operator/pkg/platform"
 )
 
-func TestExpectedHPA(t *testing.T) {
+var hpaUpdateErr error
+var withHPA bool
+
+func TestExpectedHPAVersionV2Beta2(t *testing.T) {
 	params := paramsWithHPA(autodetect.AutoscalingVersionV2Beta2)
 	err := params.Config.AutoDetect()
 	assert.NoError(t, err)
-	autoscalingVersion := params.Config.AutoscalingVersion()
 
 	expectedHPA := collector.HorizontalPodAutoscaler(params.Config, logger, params.Instance)
 	t.Run("should create HPA", func(t *testing.T) {
 		err = expectedHorizontalPodAutoscalers(context.Background(), params, []client.Object{expectedHPA})
 		assert.NoError(t, err)
 
-		exists, err := populateObjectIfExists(t, &autoscalingv2beta2.HorizontalPodAutoscaler{}, types.NamespacedName{Namespace: "default", Name: "test-collector"})
-		assert.NoError(t, err)
+		actual := autoscalingv2beta2.HorizontalPodAutoscaler{}
+		exists, hpaErr := populateObjectIfExists(t, &actual, types.NamespacedName{Namespace: "default", Name: "test-collector"})
+		assert.NoError(t, hpaErr)
+		require.Len(t, actual.Spec.Metrics, 1)
+		assert.Equal(t, int32(90), *actual.Spec.Metrics[0].Resource.Target.AverageUtilization)
+
 		assert.True(t, exists)
 	})
 
 	t.Run("should update HPA", func(t *testing.T) {
 		minReplicas := int32(1)
 		maxReplicas := int32(3)
+		memUtilization := int32(70)
 		updateParms := paramsWithHPA(autodetect.AutoscalingVersionV2Beta2)
-		updateParms.Instance.Spec.Replicas = &minReplicas
-		updateParms.Instance.Spec.MaxReplicas = &maxReplicas
+		updateParms.Instance.Spec.Autoscaler.MinReplicas = &minReplicas
+		updateParms.Instance.Spec.Autoscaler.MaxReplicas = &maxReplicas
+		updateParms.Instance.Spec.Autoscaler.TargetMemoryUtilization = &memUtilization
 		updatedHPA := collector.HorizontalPodAutoscaler(updateParms.Config, logger, updateParms.Instance)
 
-		if autoscalingVersion == autodetect.AutoscalingVersionV2Beta2 {
-			updatedAutoscaler := *updatedHPA.(*autoscalingv2beta2.HorizontalPodAutoscaler)
-			createObjectIfNotExists(t, "test-collector", &updatedAutoscaler)
-			err := expectedHorizontalPodAutoscalers(context.Background(), updateParms, []client.Object{updatedHPA})
-			assert.NoError(t, err)
+		hpaUpdateErr = expectedHorizontalPodAutoscalers(context.Background(), updateParms, []client.Object{updatedHPA})
+		require.NoError(t, hpaUpdateErr)
 
-			actual := autoscalingv2beta2.HorizontalPodAutoscaler{}
-			exists, err := populateObjectIfExists(t, &actual, types.NamespacedName{Namespace: "default", Name: "test-collector"})
+		actual := autoscalingv2beta2.HorizontalPodAutoscaler{}
+		withHPA, hpaUpdateErr = populateObjectIfExists(t, &actual, types.NamespacedName{Namespace: "default", Name: "test-collector"})
 
-			assert.NoError(t, err)
-			assert.True(t, exists)
-			assert.Equal(t, int32(1), *actual.Spec.MinReplicas)
-			assert.Equal(t, int32(3), actual.Spec.MaxReplicas)
-		} else {
-			updatedAutoscaler := *updatedHPA.(*autoscalingv2.HorizontalPodAutoscaler)
-			createObjectIfNotExists(t, "test-collector", &updatedAutoscaler)
-			err := expectedHorizontalPodAutoscalers(context.Background(), updateParms, []client.Object{updatedHPA})
-			assert.NoError(t, err)
+		assert.NoError(t, hpaUpdateErr)
+		assert.True(t, withHPA)
+		assert.Equal(t, int32(1), *actual.Spec.MinReplicas)
+		assert.Equal(t, int32(3), actual.Spec.MaxReplicas)
+		assert.Len(t, actual.Spec.Metrics, 2)
 
-			actual := autoscalingv2.HorizontalPodAutoscaler{}
-			exists, err := populateObjectIfExists(t, &actual, types.NamespacedName{Namespace: "default", Name: "test-collector"})
+		// check metric values
+		for _, metric := range actual.Spec.Metrics {
+			if metric.Resource.Name == corev1.ResourceCPU {
+				assert.Equal(t, int32(90), *metric.Resource.Target.AverageUtilization)
+			} else if metric.Resource.Name == corev1.ResourceMemory {
+				assert.Equal(t, int32(70), *metric.Resource.Target.AverageUtilization)
+			}
+		}
+	})
 
-			assert.NoError(t, err)
-			assert.True(t, exists)
-			assert.Equal(t, int32(1), *actual.Spec.MinReplicas)
-			assert.Equal(t, int32(3), actual.Spec.MaxReplicas)
+	t.Run("should delete HPA", func(t *testing.T) {
+		err = deleteHorizontalPodAutoscalers(context.Background(), params, []client.Object{expectedHPA})
+		assert.NoError(t, err)
+
+		actual := v1.Deployment{}
+		exists, _ := populateObjectIfExists(t, &actual, types.NamespacedName{Namespace: "default", Name: "test-collecto"})
+		assert.False(t, exists)
+	})
+}
+
+func TestExpectedHPAVersionV2(t *testing.T) {
+	params := paramsWithHPA(autodetect.AutoscalingVersionV2)
+	err := params.Config.AutoDetect()
+	assert.NoError(t, err)
+
+	expectedHPA := collector.HorizontalPodAutoscaler(params.Config, logger, params.Instance)
+	t.Run("should create HPA", func(t *testing.T) {
+		err = expectedHorizontalPodAutoscalers(context.Background(), params, []client.Object{expectedHPA})
+		assert.NoError(t, err)
+
+		actual := autoscalingv2.HorizontalPodAutoscaler{}
+		exists, hpaErr := populateObjectIfExists(t, &actual, types.NamespacedName{Namespace: "default", Name: "test-collector"})
+		assert.NoError(t, hpaErr)
+		require.Len(t, actual.Spec.Metrics, 1)
+		assert.Equal(t, int32(90), *actual.Spec.Metrics[0].Resource.Target.AverageUtilization)
+
+		assert.True(t, exists)
+	})
+
+	t.Run("should update HPA", func(t *testing.T) {
+		minReplicas := int32(1)
+		maxReplicas := int32(3)
+		memUtilization := int32(70)
+		updateParms := paramsWithHPA(autodetect.AutoscalingVersionV2)
+		updateParms.Instance.Spec.Autoscaler.MinReplicas = &minReplicas
+		updateParms.Instance.Spec.Autoscaler.MaxReplicas = &maxReplicas
+		updateParms.Instance.Spec.Autoscaler.TargetMemoryUtilization = &memUtilization
+		updatedHPA := collector.HorizontalPodAutoscaler(updateParms.Config, logger, updateParms.Instance)
+
+		hpaUpdateErr = expectedHorizontalPodAutoscalers(context.Background(), updateParms, []client.Object{updatedHPA})
+		require.NoError(t, hpaUpdateErr)
+
+		actual := autoscalingv2.HorizontalPodAutoscaler{}
+		withHPA, hpaUpdateErr := populateObjectIfExists(t, &actual, types.NamespacedName{Namespace: "default", Name: "test-collector"})
+
+		assert.NoError(t, hpaUpdateErr)
+		assert.True(t, withHPA)
+		assert.Equal(t, int32(1), *actual.Spec.MinReplicas)
+		assert.Equal(t, int32(3), actual.Spec.MaxReplicas)
+		assert.Len(t, actual.Spec.Metrics, 2)
+		// check metric values
+		for _, metric := range actual.Spec.Metrics {
+			if metric.Resource.Name == corev1.ResourceCPU {
+				assert.Equal(t, int32(90), *metric.Resource.Target.AverageUtilization)
+			} else if metric.Resource.Name == corev1.ResourceMemory {
+				assert.Equal(t, int32(70), *metric.Resource.Target.AverageUtilization)
+			}
 		}
 	})
 
@@ -145,10 +206,10 @@ func paramsWithHPA(autoscalingVersion autodetect.AutoscalingVersion) Params {
 					},
 					NodePort: 0,
 				}},
-				Config:      string(configYAML),
-				Replicas:    &minReplicas,
-				MaxReplicas: &maxReplicas,
+				Config: string(configYAML),
 				Autoscaler: &v1alpha1.AutoscalerSpec{
+					MinReplicas:          &minReplicas,
+					MaxReplicas:          &maxReplicas,
 					TargetCPUUtilization: &cpuUtilization,
 				},
 			},
@@ -162,17 +223,17 @@ func paramsWithHPA(autoscalingVersion autodetect.AutoscalingVersion) Params {
 var _ autodetect.AutoDetect = (*mockAutoDetect)(nil)
 
 type mockAutoDetect struct {
-	PlatformFunc   func() (platform.Platform, error)
-	HPAVersionFunc func() (autodetect.AutoscalingVersion, error)
+	OpenShiftRoutesAvailabilityFunc func() (autodetect.OpenShiftRoutesAvailability, error)
+	HPAVersionFunc                  func() (autodetect.AutoscalingVersion, error)
 }
 
 func (m *mockAutoDetect) HPAVersion() (autodetect.AutoscalingVersion, error) {
 	return m.HPAVersionFunc()
 }
 
-func (m *mockAutoDetect) Platform() (platform.Platform, error) {
-	if m.PlatformFunc != nil {
-		return m.PlatformFunc()
+func (m *mockAutoDetect) OpenShiftRoutesAvailability() (autodetect.OpenShiftRoutesAvailability, error) {
+	if m.OpenShiftRoutesAvailabilityFunc != nil {
+		return m.OpenShiftRoutesAvailabilityFunc()
 	}
-	return platform.Unknown, nil
+	return autodetect.OpenShiftRoutesNotAvailable, nil
 }

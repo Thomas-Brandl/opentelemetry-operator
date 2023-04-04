@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"testing"
 
+	routev1 "github.com/openshift/api/route/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -38,7 +39,6 @@ import (
 	"github.com/open-telemetry/opentelemetry-operator/internal/config"
 	"github.com/open-telemetry/opentelemetry-operator/pkg/autodetect"
 	"github.com/open-telemetry/opentelemetry-operator/pkg/collector/reconcile"
-	"github.com/open-telemetry/opentelemetry-operator/pkg/platform"
 )
 
 var logger = logf.Log.WithName("unit-tests")
@@ -46,11 +46,18 @@ var mockAutoDetector = &mockAutoDetect{
 	HPAVersionFunc: func() (autodetect.AutoscalingVersion, error) {
 		return autodetect.AutoscalingVersionV2Beta2, nil
 	},
+	OpenShiftRoutesAvailabilityFunc: func() (autodetect.OpenShiftRoutesAvailability, error) {
+		return autodetect.OpenShiftRoutesAvailable, nil
+	},
 }
 
 func TestNewObjectsOnReconciliation(t *testing.T) {
 	// prepare
-	cfg := config.New(config.WithCollectorImage("default-collector"), config.WithTargetAllocatorImage("default-ta-allocator"), config.WithAutoDetect(mockAutoDetector))
+	cfg := config.New(
+		config.WithCollectorImage("default-collector"),
+		config.WithTargetAllocatorImage("default-ta-allocator"),
+		config.WithAutoDetect(mockAutoDetector),
+	)
 	nsn := types.NamespacedName{Name: "my-instance", Namespace: "default"}
 	reconciler := controllers.NewReconciler(controllers.Params{
 		Client: k8sClient,
@@ -58,6 +65,7 @@ func TestNewObjectsOnReconciliation(t *testing.T) {
 		Scheme: testScheme,
 		Config: cfg,
 	})
+	require.NoError(t, cfg.AutoDetect())
 	created := &v1alpha1.OpenTelemetryCollector{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      nsn.Name,
@@ -65,6 +73,18 @@ func TestNewObjectsOnReconciliation(t *testing.T) {
 		},
 		Spec: v1alpha1.OpenTelemetryCollectorSpec{
 			Mode: v1alpha1.ModeDeployment,
+			Ports: []corev1.ServicePort{
+				{
+					Name: "telnet",
+					Port: 49935,
+				},
+			},
+			Ingress: v1alpha1.Ingress{
+				Type: v1alpha1.IngressTypeRoute,
+				Route: v1alpha1.OpenShiftRoute{
+					Termination: v1alpha1.TLSRouteTerminationTypeInsecure,
+				},
+			},
 		},
 	}
 	err := k8sClient.Create(context.Background(), created)
@@ -127,6 +147,12 @@ func TestNewObjectsOnReconciliation(t *testing.T) {
 		assert.NoError(t, err)
 		// attention! we expect statefulsets to be empty in the default configuration
 		assert.Empty(t, list.Items)
+	}
+	{
+		list := &routev1.RouteList{}
+		err = k8sClient.List(context.Background(), list, opts...)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, list.Items)
 	}
 
 	// cleanup
@@ -352,17 +378,17 @@ func TestRegisterWithManager(t *testing.T) {
 var _ autodetect.AutoDetect = (*mockAutoDetect)(nil)
 
 type mockAutoDetect struct {
-	PlatformFunc   func() (platform.Platform, error)
-	HPAVersionFunc func() (autodetect.AutoscalingVersion, error)
+	OpenShiftRoutesAvailabilityFunc func() (autodetect.OpenShiftRoutesAvailability, error)
+	HPAVersionFunc                  func() (autodetect.AutoscalingVersion, error)
 }
 
 func (m *mockAutoDetect) HPAVersion() (autodetect.AutoscalingVersion, error) {
 	return m.HPAVersionFunc()
 }
 
-func (m *mockAutoDetect) Platform() (platform.Platform, error) {
-	if m.PlatformFunc != nil {
-		return m.PlatformFunc()
+func (m *mockAutoDetect) OpenShiftRoutesAvailability() (autodetect.OpenShiftRoutesAvailability, error) {
+	if m.OpenShiftRoutesAvailabilityFunc != nil {
+		return m.OpenShiftRoutesAvailabilityFunc()
 	}
-	return platform.Unknown, nil
+	return autodetect.OpenShiftRoutesNotAvailable, nil
 }

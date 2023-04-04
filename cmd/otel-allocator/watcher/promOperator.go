@@ -33,7 +33,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-func newCRDMonitorWatcher(cfg allocatorconfig.Config, cliConfig allocatorconfig.CLIConfig) (*PrometheusCRWatcher, error) {
+func NewPrometheusCRWatcher(cfg allocatorconfig.Config, cliConfig allocatorconfig.CLIConfig) (*PrometheusCRWatcher, error) {
 	mClient, err := monitoringclient.NewForConfig(cliConfig.ClusterConfig)
 	if err != nil {
 		return nil, err
@@ -56,7 +56,7 @@ func newCRDMonitorWatcher(cfg allocatorconfig.Config, cliConfig allocatorconfig.
 		monitoringv1.PodMonitorName:     podMonitorInformers,
 	}
 
-	generator, err := prometheus.NewConfigGenerator(log.NewNopLogger(), &monitoringv1.Prometheus{}) // TODO replace Nop?
+	generator, err := prometheus.NewConfigGenerator(log.NewNopLogger(), &monitoringv1.Prometheus{}, true) // TODO replace Nop?
 	if err != nil {
 		return nil, err
 	}
@@ -70,6 +70,7 @@ func newCRDMonitorWatcher(cfg allocatorconfig.Config, cliConfig allocatorconfig.
 		informers:              monitoringInformers,
 		stopChannel:            make(chan struct{}),
 		configGenerator:        generator,
+		kubeConfigPath:         cliConfig.KubeConfigFilePath,
 		serviceMonitorSelector: servMonSelector,
 		podMonitorSelector:     podMonSelector,
 	}, nil
@@ -80,6 +81,7 @@ type PrometheusCRWatcher struct {
 	informers            map[string]*informers.ForResource
 	stopChannel          chan struct{}
 	configGenerator      *prometheus.ConfigGenerator
+	kubeConfigPath       string
 
 	serviceMonitorSelector labels.Selector
 	podMonitorSelector     labels.Selector
@@ -93,12 +95,11 @@ func getSelector(s map[string]string) labels.Selector {
 	return labels.SelectorFromSet(s)
 }
 
-// Start wrapped informers and wait for an initial sync.
-func (w *PrometheusCRWatcher) Start(upstreamEvents chan Event, upstreamErrors chan error) error {
-	watcher := Watcher(w)
+// Watch wrapped informers and wait for an initial sync.
+func (w *PrometheusCRWatcher) Watch(upstreamEvents chan Event, upstreamErrors chan error) error {
 	event := Event{
 		Source:  EventSourcePrometheusCR,
-		Watcher: &watcher,
+		Watcher: Watcher(w),
 	}
 	success := true
 
@@ -108,7 +109,6 @@ func (w *PrometheusCRWatcher) Start(upstreamEvents chan Event, upstreamErrors ch
 		if ok := cache.WaitForNamedCacheSync(name, w.stopChannel, resource.HasSynced); !ok {
 			success = false
 		}
-
 		resource.AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				upstreamEvents <- event
@@ -124,16 +124,16 @@ func (w *PrometheusCRWatcher) Start(upstreamEvents chan Event, upstreamErrors ch
 	if !success {
 		return fmt.Errorf("failed to sync cache")
 	}
-
+	<-w.stopChannel
 	return nil
 }
 
 func (w *PrometheusCRWatcher) Close() error {
-	w.stopChannel <- struct{}{}
+	close(w.stopChannel)
 	return nil
 }
 
-func (w *PrometheusCRWatcher) CreatePromConfig(kubeConfigPath string) (*promconfig.Config, error) {
+func (w *PrometheusCRWatcher) LoadConfig() (*promconfig.Config, error) {
 	serviceMonitorInstances := make(map[string]*monitoringv1.ServiceMonitor)
 
 	smRetrieveErr := w.informers[monitoringv1.ServiceMonitorName].ListAll(w.serviceMonitorSelector, func(sm interface{}) {
@@ -162,7 +162,16 @@ func (w *PrometheusCRWatcher) CreatePromConfig(kubeConfigPath string) (*promconf
 		OAuth2Assets:    nil,
 		SigV4Assets:     nil,
 	}
-	generatedConfig, err := w.configGenerator.Generate(&monitoringv1.Prometheus{}, serviceMonitorInstances, podMonitorInstances, map[string]*monitoringv1.Probe{}, &store, nil, nil, nil, []string{})
+	// TODO: We should make these durations configurable
+	prom := &monitoringv1.Prometheus{
+		Spec: monitoringv1.PrometheusSpec{
+			EvaluationInterval: monitoringv1.Duration("30s"),
+			CommonPrometheusFields: monitoringv1.CommonPrometheusFields{
+				ScrapeInterval: monitoringv1.Duration("30s"),
+			},
+		},
+	}
+	generatedConfig, err := w.configGenerator.Generate(prom, serviceMonitorInstances, podMonitorInstances, map[string]*monitoringv1.Probe{}, &store, nil, nil, nil, []string{})
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +188,7 @@ func (w *PrometheusCRWatcher) CreatePromConfig(kubeConfigPath string) (*promconf
 		for _, serviceDiscoveryConfig := range scrapeConfig.ServiceDiscoveryConfigs {
 			if serviceDiscoveryConfig.Name() == "kubernetes" {
 				sdConfig := interface{}(serviceDiscoveryConfig).(*kubeDiscovery.SDConfig)
-				sdConfig.KubeConfig = kubeConfigPath
+				sdConfig.KubeConfig = w.kubeConfigPath
 			}
 		}
 	}
