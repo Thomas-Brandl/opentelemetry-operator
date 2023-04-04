@@ -7,7 +7,7 @@
 # - Ensure you have `@opentelemetry/api`, `@opentelemetry/auto-instrumentations-node`, and `@opentelemetry/sdk-node` or your customized
 #   alternatives installed.
 # - Grant the necessary access to `/autoinstrumentation` directory. `chmod -R go+r /autoinstrumentation`
-FROM node:16 AS build
+FROM s390x/node:16 AS build
 
 WORKDIR /operator-build
 COPY . .
