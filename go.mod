@@ -6,12 +6,13 @@ retract v1.51.0
 
 require (
 	github.com/Masterminds/semver/v3 v3.2.0
-	github.com/go-logr/logr v1.2.3
+	github.com/go-logr/logr v1.2.4
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/openshift/api v3.9.0+incompatible
 	github.com/prometheus/prometheus v1.8.2-0.20210621150501-ff58416a0b02
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.2
+	go.opentelemetry.io/collector/featuregate v0.74.0
 	go.opentelemetry.io/otel v1.14.0
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.26.3
@@ -20,7 +21,7 @@ require (
 	k8s.io/client-go v0.26.3
 	k8s.io/component-base v0.26.3
 	k8s.io/kubectl v0.26.3
-	sigs.k8s.io/controller-runtime v0.14.5
+	sigs.k8s.io/controller-runtime v0.14.6
 )
 
 require (
@@ -40,11 +41,10 @@ require (
 	github.com/aws/aws-sdk-go v1.38.60 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
-	github.com/containerd/containerd v1.5.18 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/digitalocean/godo v1.62.0 // indirect
 	github.com/docker/distribution v2.8.1+incompatible // indirect
-	github.com/docker/docker v20.10.14+incompatible // indirect
+	github.com/docker/docker v20.10.24+incompatible // indirect
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.9.0 // indirect
@@ -109,7 +109,7 @@ require (
 	go.opencensus.io v0.23.0 // indirect
 	go.opentelemetry.io/otel/trace v1.14.0 // indirect
 	go.uber.org/atomic v1.8.0 // indirect
-	go.uber.org/multierr v1.6.0 // indirect
+	go.uber.org/multierr v1.10.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/crypto v0.1.0 // indirect
 	golang.org/x/net v0.7.0 // indirect
